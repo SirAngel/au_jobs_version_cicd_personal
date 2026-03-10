@@ -7,6 +7,11 @@ from awsglue.job import Job
 from pyspark.sql import functions as PYSKF
 from datetime import datetime, timezone, timedelta
 
+print("Hola, esto es un test de CI/CD")
+print("Hola, esto es un test de CI/CD")
+print("Hola, esto es un test de CI/CD")
+
+
 ## @params: [JOB_NAME]
 args = getResolvedOptions(sys.argv, ["JOB_NAME"])
 
