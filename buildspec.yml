@@ -79,7 +79,7 @@ phases:
             if aws glue get-job --job-name "$job_name" 2>/dev/null 1>/dev/null; then
               echo "Actualizando Glue Job existente: $job_name"
               aws glue update-job --job-name "$job_name" \
-                --job-update Command="{Name=glueetl,ScriptLocation=s3://${S3_BUCKET}/${S3_PREFIX}/${domain}/${job_name}.py}"
+                --job-update "Command={Name=glueetl,ScriptLocation=s3://${S3_BUCKET}/${S3_PREFIX}/${domain}/${job_name}.py}"
               
               if [ $? -eq 0 ]; then
                 echo "✓ Glue Job actualizado exitosamente"
