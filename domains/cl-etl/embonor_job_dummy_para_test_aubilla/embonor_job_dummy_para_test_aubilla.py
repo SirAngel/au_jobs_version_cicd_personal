@@ -16,6 +16,12 @@ spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args["JOB_NAME"], args)
 
+print('modifico esto para testing')
+print('modifico esto para testing')
+print('modifico esto para testing')
+
+
+
 ## @type: DataSource
 ## @args: [database = "embonor_dwh_cw_tables", table_name = "basis_olap_dbo_dim_articulo", transformation_ctx = "datasource0"]
 ## @return: datasource0
