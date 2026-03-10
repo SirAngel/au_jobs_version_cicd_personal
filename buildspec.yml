@@ -1,0 +1,135 @@
+version: 0.2
+
+env:
+  variables:
+    S3_BUCKET: "aa-cl-dev-aubillatest-aubillatest-s3"
+    S3_PREFIX: "prod"
+    STATE_FILE: "cicd-state/job_hashes.json"
+
+phases:
+  pre_build:
+    commands:
+      - echo "Detectando jobs modificados usando hashes..."
+      - |
+        # Descargar estado previo desde S3
+        if aws s3 cp "s3://${S3_BUCKET}/${STATE_FILE}" /tmp/previous_hashes.json 2>/dev/null; then
+          echo "Estado previo encontrado"
+          cat /tmp/previous_hashes.json
+        else
+          echo "No hay estado previo, todos los jobs serán desplegados"
+          echo '{}' > /tmp/previous_hashes.json
+        fi
+      
+      - |
+        # Calcular hashes actuales y detectar cambios
+        echo "Calculando hashes y detectando cambios..."
+        echo "" > /tmp/changed_jobs.txt
+        
+        for job_file in $(find domains -name "*.py" -type f 2>/dev/null | sort); do
+          if [ -f "$job_file" ]; then
+            current_hash=$(sha256sum "$job_file" | awk '{print $1}')
+            previous_hash=$(python3 -c "import json; f=open('/tmp/previous_hashes.json'); d=json.load(f); print(d.get('$job_file', ''))" 2>/dev/null || echo "")
+            
+            if [ "$current_hash" != "$previous_hash" ] || [ -z "$previous_hash" ]; then
+              echo "Cambio detectado: $job_file (hash: $current_hash)"
+              echo "$job_file" >> /tmp/changed_jobs.txt
+            else
+              echo "Sin cambios: $job_file"
+            fi
+          fi
+        done
+      
+      - |
+        # Verificar si hay cambios
+        if [ ! -s /tmp/changed_jobs.txt ]; then
+          echo "No hay jobs modificados, finalizando build"
+          exit 0
+        fi
+        
+        echo "=== Jobs que serán desplegados ==="
+        cat /tmp/changed_jobs.txt
+
+  build:
+    commands:
+      - echo "Empaquetando y desplegando jobs modificados..."
+      - |
+        while IFS= read -r job_file; do
+          if [ -n "$job_file" ] && [ -f "$job_file" ]; then
+            job_name=$(basename "$job_file" .py)
+            domain=$(echo "$job_file" | cut -d'/' -f2)
+            
+            echo "==================================="
+            echo "Procesando: $job_name"
+            echo "Dominio: $domain"
+            echo "Archivo: $job_file"
+            echo "==================================="
+            
+            # Subir a S3
+            echo "Subiendo a S3..."
+            aws s3 cp "$job_file" "s3://${S3_BUCKET}/${S3_PREFIX}/${domain}/${job_name}.py"
+            
+            if [ $? -eq 0 ]; then
+              echo "✓ Archivo subido exitosamente a S3"
+            else
+              echo "✗ Error al subir archivo a S3"
+              continue
+            fi
+            
+            # Actualizar Glue Job si existe
+            if aws glue get-job --job-name "$job_name" 2>/dev/null 1>/dev/null; then
+              echo "Actualizando Glue Job existente: $job_name"
+              aws glue update-job --job-name "$job_name" \
+                --job-update Command="{Name=glueetl,ScriptLocation=s3://${S3_BUCKET}/${S3_PREFIX}/${domain}/${job_name}.py}"
+              
+              if [ $? -eq 0 ]; then
+                echo "✓ Glue Job actualizado exitosamente"
+              else
+                echo "✗ Error al actualizar Glue Job"
+              fi
+            else
+              echo "ℹ Job $job_name no existe en Glue, solo se subió a S3"
+            fi
+            
+            echo ""
+          fi
+        done < /tmp/changed_jobs.txt
+
+  post_build:
+    commands:
+      - echo "Despliegue completado"
+      - |
+        # Generar nuevo archivo de hashes usando Python
+        echo "Generando archivo de estado actualizado..."
+        python3 << 'EOF'
+import json
+import hashlib
+import os
+from pathlib import Path
+
+hashes = {}
+for job_file in Path('domains').rglob('*.py'):
+    if job_file.is_file():
+        with open(job_file, 'rb') as f:
+            file_hash = hashlib.sha256(f.read()).hexdigest()
+        hashes[str(job_file)] = file_hash
+
+with open('/tmp/current_hashes.json', 'w') as f:
+    json.dump(hashes, f, indent=2)
+
+print(f"Estado generado con {len(hashes)} jobs")
+EOF
+      
+      - |
+        # Guardar nuevos hashes en S3
+        echo "Guardando estado en S3..."
+        aws s3 cp /tmp/current_hashes.json "s3://${S3_BUCKET}/${STATE_FILE}"
+        
+        if [ $? -eq 0 ]; then
+          echo "✓ Estado guardado exitosamente"
+        else
+          echo "✗ Error al guardar estado"
+        fi
+      
+      - echo "=== Resumen del despliegue ==="
+      - echo "Jobs desplegados:"
+      - cat /tmp/changed_jobs.txt
