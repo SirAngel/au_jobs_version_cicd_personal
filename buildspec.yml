@@ -97,39 +97,11 @@ phases:
   post_build:
     commands:
       - echo "Despliegue completado"
-      - |
-        # Generar nuevo archivo de hashes usando Python
-        echo "Generando archivo de estado actualizado..."
-        python3 << 'EOF'
-import json
-import hashlib
-import os
-from pathlib import Path
-
-hashes = {}
-for job_file in Path('domains').rglob('*.py'):
-    if job_file.is_file():
-        with open(job_file, 'rb') as f:
-            file_hash = hashlib.sha256(f.read()).hexdigest()
-        hashes[str(job_file)] = file_hash
-
-with open('/tmp/current_hashes.json', 'w') as f:
-    json.dump(hashes, f, indent=2)
-
-print(f"Estado generado con {len(hashes)} jobs")
-EOF
-      
-      - |
-        # Guardar nuevos hashes en S3
-        echo "Guardando estado en S3..."
-        aws s3 cp /tmp/current_hashes.json "s3://${S3_BUCKET}/${STATE_FILE}"
-        
-        if [ $? -eq 0 ]; then
-          echo "✓ Estado guardado exitosamente"
-        else
-          echo "✗ Error al guardar estado"
-        fi
-      
+      - echo "Generando archivo de estado actualizado..."
+      - python3 generate_hashes.py
+      - echo "Guardando estado en S3..."
+      - aws s3 cp /tmp/current_hashes.json "s3://${S3_BUCKET}/${STATE_FILE}"
+      - echo "✓ Estado guardado exitosamente"
       - echo "=== Resumen del despliegue ==="
       - echo "Jobs desplegados:"
       - cat /tmp/changed_jobs.txt
